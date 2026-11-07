@@ -206,7 +206,7 @@ def _layout_needs_refresh(row: sqlite3.Row) -> bool:
         if chart.get("values") != [[""] * 6 for _ in range(6)]:
             return True
     elif kind == "cryptarithm":
-        if chart.get("digits") != [str(i) for i in range(1, 11)] or chart.get("letters") != list("ABCDEFGHIJ"):
+        if chart.get("digits") != list("0123456789") or chart.get("letters") != list("ABCDEFGHIJ"):
             return True
         if chart.get("formula_rows") and not layout["lines"]:
             return True
@@ -731,8 +731,31 @@ def _checkerboard() -> dict[str, Any]:
 
 def _inline_formula(text: str) -> list[str]:
     compact = re.sub(r"\s+", "", text.upper())
-    match = re.fullmatch(r"([A-Z]{3,12})\+([A-Z]{3,12})=([A-Z]{3,12})", compact)
-    return [match.group(1), "+" + match.group(2), match.group(3)] if match else []
+    match = re.fullmatch(r"([A-Z]{2,18}(?:\+[A-Z]{2,18}){1,10})=([A-Z]{2,18})", compact)
+    if not match:
+        return []
+    operands = match.group(1).split("+")
+    return [operands[0], *("+" + operand for operand in operands[1:]), match.group(2)]
+
+
+def _formula_from_fragments(fragments: list[str]) -> list[str]:
+    """Assemble all addends before the final result, even with detached + glyphs."""
+    words: list[str] = []
+    for fragment in fragments:
+        inline = _inline_formula(fragment)
+        if inline:
+            return inline
+        compact = re.sub(r"[^A-Z+]", "", fragment.upper())
+        if compact == "+":
+            continue
+        word = compact.lstrip("+")
+        if re.fullmatch(r"[A-Z]{2,18}", word):
+            words.append(word)
+        if len(words) >= 12:
+            break
+    if len(words) < 3:
+        return []
+    return [words[0], *("+" + word for word in words[1:-1]), words[-1]]
 
 
 def _cryptarithm(rows: list[dict[str, Any]], prompt: str, page_width: float) -> dict[str, Any]:
@@ -752,33 +775,34 @@ def _cryptarithm(rows: list[dict[str, Any]], prompt: str, page_width: float) -> 
     formula_label = _table_row(left, r"Cryptarithm\s+formula|(?:the\s+)?formula")
     formula_rows: list[str] = []
     if formula_label:
-        pending_plus = False
+        heading_edge = max((w["right"] for w in formula_label["words"] if
+                            w["x"] < page_width * .42), default=page_width * .32)
+        formula_edge = min(page_width * .52, max(page_width * .42, heading_edge + 65))
+        fragments: list[str] = []
+        last_word_y: float | None = None
+        word_count = 0
         for row in left:
-            if not formula_label["y"] + 5 < row["y"] < formula_label["y"] + 190:
+            if not formula_label["y"] + 5 < row["y"] < formula_label["y"] + 380:
                 continue
-            pieces = [w["text"] for w in row["words"] if w["x"] < page_width * .52]
-            text = re.sub(r"[^A-Z+]", "", "".join(pieces).upper())
-            if text == "+":
-                # The plus sign is often on its own, slightly below BYRON.
-                if len(formula_rows) >= 2 and not formula_rows[1].startswith("+"):
-                    formula_rows[1] = "+" + formula_rows[1]
-                else:
-                    pending_plus = True
-                continue
-            if 3 <= len(text) <= 12 and sum(char.isalpha() for char in text) >= 3:
-                formula_rows.append(("+" if pending_plus and not text.startswith("+") else "") + text)
-                pending_plus = False
-                if len(formula_rows) == 3:
-                    break
-        if len(formula_rows) == 3 and "+" not in "".join(formula_rows):
-            formula_rows[1] = "+" + formula_rows[1]
+            pieces = [w["text"] for w in row["words"] if w["x"] < formula_edge]
+            fragment = " ".join(pieces)
+            if fragment and not _PAGE_NOISE.match(fragment):
+                word = re.sub(r"[^A-Z]", "", fragment.upper())
+                if (re.fullmatch(r"[A-Z]{2,18}", word) and
+                        re.sub(r"[^A-Z+]", "", fragment.upper()).lstrip("+") == word):
+                    if word_count >= 3 and last_word_y is not None and row["y"] - last_word_y > 85:
+                        break  # A footer or next section starts well below the arithmetic.
+                    last_word_y = row["y"]
+                    word_count += 1
+                fragments.append(fragment)
+        formula_rows = _formula_from_fragments(fragments)
     if not formula_rows:
         formula_rows = next((formula for row in left if
                              (formula := _inline_formula(row["text"]))), [])
-    # This work area uses stable A–J row labels and 1–10 column labels,
+    # This work area uses editable A–J row placeholders and 0–9 columns,
     # independent of the letters or digits appearing in a particular puzzle.
     return {"type": "cryptarithm", "decode_digits": decode_digits,
-            "formula_rows": formula_rows, "digits": [str(i) for i in range(1, 11)],
+            "formula_rows": formula_rows, "digits": list("0123456789"),
             "letters": list("ABCDEFGHIJ")}
 
 
@@ -850,30 +874,7 @@ def _infer_layout_from_text(prompt: str, cipher: str, kind: str = "generic") -> 
         crypt = _cryptarithm([], prompt, 600)
         original_lines = lines
         label_at = next((i for i, line in enumerate(original_lines) if re.search(r"cryptarithm\s+formula", line, re.I)), -1)
-        if label_at >= 0:
-            pending_plus = False
-            for line in original_lines[label_at + 1:]:
-                compact = re.sub(r"[^A-Z+]", "", line.upper())
-                if compact == "+":
-                    if len(crypt["formula_rows"]) >= 2 and not crypt["formula_rows"][1].startswith("+"):
-                        crypt["formula_rows"][1] = "+" + crypt["formula_rows"][1]
-                    else:
-                        pending_plus = True
-                    continue
-                # Old PDF text can be flattened down each column. An equation
-                # row still contains multiple letter tokens spaced on one line.
-                if len(re.findall(r"\b[A-Z]\b", line.upper())) < 3:
-                    continue
-                if 3 <= len(compact) <= 12:
-                    crypt["formula_rows"].append(("+" if pending_plus and not compact.startswith("+") else "") + compact)
-                    pending_plus = False
-                    if len(crypt["formula_rows"]) == 3:
-                        break
-        if len(crypt["formula_rows"]) == 3 and "+" not in "".join(crypt["formula_rows"]):
-            crypt["formula_rows"][1] = "+" + crypt["formula_rows"][1]
-        if not crypt["formula_rows"]:
-            crypt["formula_rows"] = next((formula for line in original_lines if
-                                          (formula := _inline_formula(line))), [])
+        crypt["formula_rows"] = _formula_from_fragments(original_lines[label_at + 1:])
         tables = [crypt]
         formula_words = {re.sub(r"[^A-Z]", "", formula.upper()) for formula in crypt["formula_rows"]}
         formula_words.add("".join(re.sub(r"[^A-Z]", "", formula.upper()) for formula in crypt["formula_rows"]))
@@ -885,6 +886,8 @@ def _infer_layout_from_text(prompt: str, cipher: str, kind: str = "generic") -> 
     elif kind == "fractionated_morse":
         tables = [_morse_chart()]
     return kind, {"lines": lines, "tables": tables}
+
+
 def _heading(line: str) -> tuple[int, int, str] | None:
     timed = _TIMED_HEADING.match(line)
     if timed:
@@ -1254,7 +1257,7 @@ def _merge_answer_ops(room_id: str, event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-_CELL_KEY = re.compile(r"^(?:line:\d{1,3}(?::char:\d{1,4})?|table:\d{1,2}:row:\d{1,3}:col:\d{1,3}|crypt:(?:decode:\d{1,2}|grid:\d{1,2}:\d{1,2}|formula:\d{1,2}:\d{1,2}))$")
+_CELL_KEY = re.compile(r"^(?:line:\d{1,3}(?::char:\d{1,4})?|table:\d{1,2}:row:\d{1,3}:col:\d{1,3}|crypt:(?:decode:\d{1,2}|grid:\d{1,2}:\d{1,2}|formula:\d{1,2}:\d{1,2}|label:[0-9]))$")
 
 
 def _merge_cell_update(room_id: str, event: dict[str, Any]) -> dict[str, Any]:
@@ -1262,7 +1265,7 @@ def _merge_cell_update(room_id: str, event: dict[str, Any]) -> dict[str, Any]:
     if (not _valid_id(question_id) or not isinstance(key, str) or len(key) > 120 or
             not _CELL_KEY.fullmatch(key) or not isinstance(value, str) or len(value) > 1000 or
             any(ord(char) < 32 and char not in "\n\t" for char in value) or
-            (":char:" in key and len(value) > 1)):
+            ((":char:" in key or key.startswith("crypt:label:")) and len(value) > 1)):
         raise ValueError("Invalid worksheet cell update.")
     with closing(_connect()) as conn:
         row = conn.execute("SELECT work_cells FROM questions WHERE room_id = ? AND id = ?", (room_id, question_id)).fetchone()
