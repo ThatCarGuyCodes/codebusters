@@ -537,7 +537,9 @@
     return `<input type="text" class="work-cell work-cell-${size}" data-cell-key="${escapeHtml(key)}" ` +
       (options.fallbackKey ? `data-fallback-key="${escapeHtml(options.fallbackKey)}" ` : '') +
       `value="${escapeHtml(value)}" maxlength="${maxLength}" spellcheck="false" autocomplete="off" ` +
-      `aria-label="${escapeHtml(label)}"${size === 'line' ? ' placeholder="Write your solution beneath this line"' : ''}>`;
+      `aria-label="${escapeHtml(label)}"${options.placeholder != null ?
+        ` placeholder="${escapeHtml(options.placeholder)}"` :
+        size === 'line' ? ' placeholder="Write your solution beneath this line"' : ''}>`;
   }
 
   function renderCipherLines(q, lines, sourceIndexes = []) {
@@ -619,7 +621,7 @@
       fractions: DEFAULT_MORSE, replacement: Array(26).fill('') };
     if (kind === 'cryptarithm') return { type: 'cryptarithm',
       decode_digits: String(q.prompt || '').match(/\b(?:values?|digits?)\s*(\d{5,12})\b/i)?.[1] || '',
-      formula_rows: [], digits: Array.from({ length: 10 }, (_, i) => String(i + 1)),
+      formula_rows: [], digits: Array.from({ length: 10 }, (_, i) => String(i)),
       letters: ALPHABET.slice(0, 10) };
     return null;
   }
@@ -704,18 +706,22 @@
   }
 
   function cryptFormulaRows(table, lines) {
-    if (Array.isArray(table.formula_rows) && table.formula_rows.length) return table.formula_rows.slice(0, 8);
+    const supplied = Array.isArray(table.formula_rows) ? table.formula_rows.filter(row => String(row).trim()) : [];
     const possible = lines.map(line => String(line).replace(/\s/g, '')).filter(line =>
-      /^[+A-Z]{3,12}$/.test(line) && /[A-Z]{3}/.test(line));
-    // A standalone ciphertext line is not necessarily an arithmetic formula.
-    if (possible.length < 3 || !possible.some(line => line.startsWith('+'))) return [];
-    return possible.slice(0, 3);
+      /^[+A-Z]{3,20}$/.test(line) && /[A-Z]{3}/.test(line));
+    const extracted = supplied.length ? supplied.slice(0, 24) :
+      possible.length >= 3 && (possible.some(line => line.startsWith('+')) ||
+        lines.some(line => String(line).trim() === '+')) ? possible.slice(0, 24) : [];
+    return extracted.map((row, index) => {
+      const text = String(row).trim();
+      return index > 0 && index < extracted.length - 1 && !/^[+−-]/.test(text) ? `+${text}` : text;
+    });
   }
 
   function renderCryptarithm(q, table, lines) {
     const decode = Array.from(String(table.decode_digits || '').replace(/\s/g, '')).slice(0, 60);
     const formula = cryptFormulaRows(table, lines);
-    const digits = Array.from({ length: 10 }, (_, index) => String(index + 1));
+    const digits = Array.from({ length: 10 }, (_, index) => String(index));
     const letters = ALPHABET.slice(0, 10);
     const usedFormulaLines = new Set();
     const formulaSources = formula.map(row => {
@@ -731,7 +737,7 @@
         `<td>${cellInput(q, `crypt:decode:${index}`, `Value decoded from ${d}, position ${index + 1}`)}</td>`).join('')}</tr></tbody></table></div></section>` : '';
     const formulaHtml = formula.length ? `<section class="crypt-formula"><h3>Cryptarithm formula</h3>` +
       `<div class="crypt-formula-equation" aria-label="${escapeHtml(formula.join(', then '))}">${formula.map((line, row) =>
-        `<div class="crypt-formula-row${row === formula.length - 1 ? ' crypt-result' : ''}">` +
+        `<div class="crypt-formula-row${row === formula.length - 2 ? ' crypt-last-summand' : ''}${row === formula.length - 1 ? ' crypt-result' : ''}">` +
         Array.from(String(line)).map((char, column) => /^\s$/.test(char)
           ? `<span class="crypt-formula-space" aria-hidden="true"></span>` :
           `<span class="crypt-formula-unit"><span class="cipher-char-symbol" aria-hidden="true">${escapeHtml(char)}</span>` +
@@ -753,8 +759,9 @@
     const gridHtml = `<div class="cipher-table-scroll crypt-grid-scroll"><table class="cipher-table crypt-grid"><caption class="visually-hidden">Letter and digit grid</caption>` +
       `<thead><tr><th scope="col" class="table-corner" aria-label="Letter"></th>${digits.map(d =>
         `<th scope="col">${escapeHtml(d)}</th>`).join('')}</tr></thead><tbody>${letters.map((letter, row) =>
-        `<tr><th scope="row">${escapeHtml(letter)}</th>${digits.map((digit, column) =>
-          `<td>${cellInput(q, `crypt:grid:${row}:${column}`, `${letter} and digit ${digit}`)}</td>`).join('')}</tr>`
+        `<tr><th scope="row">${cellInput(q, `crypt:label:${row}`,
+          `Cryptarithm grid row ${row + 1}, replace placeholder ${letter}`, { size: 'label', placeholder: letter })}</th>${digits.map((digit, column) =>
+          `<td>${cellInput(q, `crypt:grid:${row}:${column}`, `Cryptarithm grid row ${row + 1}, digit ${digit}`)}</td>`).join('')}</tr>`
       ).join('')}</tbody></table></div>`;
     return `<div class="crypt-workspace"><div class="crypt-left">${decodeHtml}${formulaHtml}</div>${gridHtml}</div>`;
   }
@@ -797,7 +804,9 @@
     const worksheetEntries = lines.map((line, index) => ({ line, index })).filter(({ line }) => {
       if (!crypt) return true;
       const compact = String(line).replace(/[\s+]/g, '').toUpperCase();
-      return compact ? !formula.includes(compact) : !formula.length;
+      const letters = String(line).toUpperCase().replace(/[^A-Z]/g, '');
+      return compact ? !formula.includes(compact) &&
+        !(formula.length && letters === formula.join('').replace(/[^A-Z]/g, '')) : !formula.length;
     });
     const worksheetLines = worksheetEntries.map(({ line }) => line);
     const signature = JSON.stringify([q.id, kind, q.prompt, q.cipher, worksheetLines, tables]);
