@@ -132,3 +132,14 @@ a{color:inherit;text-decoration:none}
 .work-cell-letter{height:26px;border:0;border-bottom:1.5px solid #91b1aa;border-radius:0;background:transparent}
 .work-cell-letter:hover{border-bottom-color:#467f77}
 .work-cell-letter:focus{border:0;border-bottom:2px solid #257d71;border-radius:2px;background:#fff;box-shadow:0 0 0 2px #30897829}
+.crypt-formula-row.crypt-last-summand{border-bottom:2px solid #253647;padding-bottom:7px}
+.crypt-grid tbody th{padding:0;background:#f4f6f6}
+.crypt-grid .work-cell-label{width:23px;height:29px;padding:2px 0;border:0;border-radius:0;background:transparent;color:#17253a;text-align:center;font-size:14px}
+.crypt-grid .work-cell-label::placeholder{color:#87939b;opacity:1}
+.crypt-grid .work-cell-label:focus{background:#fff;box-shadow:inset 0 0 0 2px #308978}
+
+/* Global creator credit in the top bar. The icon is bundled inline. */
+.creator-credit{display:inline-flex;align-items:center;gap:5px;color:#b2c2d4;font-size:11px;font-weight:500;line-height:1;letter-spacing:.01em;white-space:nowrap}
+.creator-credit strong{color:#fff;font-weight:750}
+.creator-credit svg{width:19px;height:19px;flex:none;fill:#5865f2}
+@media(max-width:520px){.topbar{height:auto;min-height:62px;padding:9px 13px;gap:6px}.brand{font-size:20px}.brand-mark{width:26px;height:26px}.topbar-right{flex-direction:column;align-items:flex-end;gap:4px}.creator-credit{font-size:10px}.creator-credit svg{width:17px;height:17px}.connection{padding:3px 7px;font-size:9px;min-width:0}}
